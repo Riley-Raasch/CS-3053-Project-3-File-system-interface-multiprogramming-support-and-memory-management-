@@ -1,5 +1,11 @@
 package nachos.userprog;
 
+//ADDED
+import java.util.HashMap;
+import java.util.LinkedList;
+import java.util.Map;
+import java.util.LinkedList;
+
 import nachos.machine.*;
 import nachos.threads.*;
 import nachos.userprog.*;
@@ -27,7 +33,25 @@ public class UserKernel extends ThreadedKernel {
 	Machine.processor().setExceptionHandler(new Runnable() {
 		public void run() { exceptionHandler(); }
 	    });
-    }
+
+		/*Lib.assertTrue(availablePages.isEmpty());
+		
+		//no Lock needed, no other threads here when initializing.
+		while(availablePages.size() < Machine.processor().getNumPhysPages())
+			availablePages.add(availablePages.size());*/
+
+		pageLock = new Lock();
+		pageLock.acquire();
+		availablePages = new LinkedList<Integer>();
+		
+		int numPages = Machine.processor().getNumPhysPages();
+		for(Integer i = 0; i < numPages; i++){
+			availablePages.add(i);
+		}
+		
+		pageLock.release();
+	}
+
 
     /**
      * Test the console device.
@@ -112,4 +136,105 @@ public class UserKernel extends ThreadedKernel {
 
     // dummy variables to make javac smarter
     private static Coff dummy1 = null;
+
+//TODO:
+	public static class FileManager{
+		public int count = 1;
+		public boolean unlink = false;
+	}
+	
+	private static HashMap<String, FileManager> fileManager = new HashMap<String, FileManager>();
+	
+	//private static Lock fileLock = new Lock();
+	
+	public static boolean createFile(String filename){
+		boolean status = Machine.interrupt().disable();
+		if(!fileManager.containsKey(filename)){
+			fileManager.put(filename, new FileManager());
+			Machine.interrupt().restore(status);
+			return true;
+		}else{
+			Machine.interrupt().restore(status);
+			return false;
+		}
+	}
+	
+	public static boolean openFile(String filename){
+		boolean status = Machine.interrupt().disable();
+		FileManager tmp = fileManager.get(filename);
+		if(tmp != null){
+			tmp.count++;
+			Machine.interrupt().restore(status);
+			return true;
+		}else{
+			fileManager.put(filename, new FileManager());
+			Machine.interrupt().restore(status);
+			return true;
+		}
+	}
+	
+	public static boolean closeFile(String filename){
+		boolean status = Machine.interrupt().disable();
+		FileManager tmp = fileManager.get(filename);
+		if(tmp != null){
+			if(tmp.count > 0){
+				tmp.count --;
+			}
+			if(tmp.unlink && tmp.count == 0){
+				fileSystem.remove(filename);
+				fileManager.remove(filename);
+			}
+			Machine.interrupt().restore(status);
+			return true;
+		}
+		Machine.interrupt().restore(status);
+		return false;
+	}
+	
+	public static boolean unlinkFile(String filename){
+		boolean status = Machine.interrupt().disable();
+		FileManager tmp = fileManager.get(filename);
+		if(tmp == null){
+			Machine.interrupt().restore(status);
+			return false;
+		}
+		
+		if(tmp.count == 0){
+			fileSystem.remove(filename);
+			fileManager.remove(filename);
+		}
+		else{
+			tmp.unlink = true;
+		}
+		Machine.interrupt().restore(status);
+		return true;
+	}
+	
+	public static int getNumAvailablePages(){
+		pageLock.acquire();
+		int numAvailablePages = availablePages.size();
+		pageLock.release();
+		return numAvailablePages;
+	}
+	
+	public static int nextAvailablePage(){
+		pageLock.acquire();
+		if(availablePages.isEmpty()){
+			pageLock.release();
+			return -1;
+		}
+		
+		int ppn = availablePages.getFirst().intValue();
+		pageLock.release();
+		return ppn;
+	}
+	
+	public static void freePage(int ppn){
+		pageLock.acquire();
+		availablePages.add(ppn);
+		pageLock.release();
+	}
+
+	public static LinkedList<Integer> availablePages; 
+	public static Lock pageLock;
 }
