@@ -1,10 +1,7 @@
 package nachos.userprog;
 
 //ADDED
-import java.util.HashMap;
-import java.util.LinkedList;
-import java.util.Map;
-import java.util.LinkedList;
+import java.util.*;
 
 import nachos.machine.*;
 import nachos.threads.*;
@@ -139,8 +136,8 @@ public class UserKernel extends ThreadedKernel {
 
 //TODO:
 	public static class FileManager{
-		public int count = 1;
 		public boolean unlink = false;
+		public int count = 1;
 	}
 	
 	private static HashMap<String, FileManager> fileManager = new HashMap<String, FileManager>();
@@ -162,12 +159,12 @@ public class UserKernel extends ThreadedKernel {
 	public static boolean openFile(String filename){
 		boolean status = Machine.interrupt().disable();
 		FileManager tmp = fileManager.get(filename);
-		if(tmp != null){
-			tmp.count++;
+		if(tmp == null){
+			fileManager.put(filename, new FileManager());
 			Machine.interrupt().restore(status);
 			return true;
 		}else{
-			fileManager.put(filename, new FileManager());
+			tmp.count++;
 			Machine.interrupt().restore(status);
 			return true;
 		}
@@ -176,19 +173,21 @@ public class UserKernel extends ThreadedKernel {
 	public static boolean closeFile(String filename){
 		boolean status = Machine.interrupt().disable();
 		FileManager tmp = fileManager.get(filename);
-		if(tmp != null){
-			if(tmp.count > 0){
-				tmp.count --;
-			}
-			if(tmp.unlink && tmp.count == 0){
-				fileSystem.remove(filename);
-				fileManager.remove(filename);
-			}
+		if(tmp == null){
 			Machine.interrupt().restore(status);
-			return true;
+			return false;
+	
+		}
+
+		if(tmp.count > 0){
+			tmp.count --;
+		}
+		if(tmp.unlink && tmp.count == 0){
+			fileSystem.remove(filename);
+			fileManager.remove(filename);
 		}
 		Machine.interrupt().restore(status);
-		return false;
+		return true;
 	}
 	
 	public static boolean unlinkFile(String filename){

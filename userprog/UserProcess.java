@@ -27,19 +27,19 @@ public class UserProcess {
     public UserProcess() {
 //TODO:
 		boolean status = Machine.interrupt().disable();
-		processId = (processNumber++);
 		fileList = new FileDescriptor[16];
+		processId = (processNumber++);
 		if (parentProcess == null) {
-			stdin = UserKernel.console.openForReading();
 			stdout = UserKernel.console.openForWriting();
+			stdin = UserKernel.console.openForReading();
 		} else {
 			stdin = parentProcess.stdin;
 			stdout = parentProcess.stdout;
 		}
-		fileList[0] = new FileDescriptor(null, stdin);
 		fileList[1] = new FileDescriptor(null, stdout);
-		childList = new LinkedList<UserProcess>();
+		fileList[0] = new FileDescriptor(null, stdin);
 		exitMap = new HashMap<Integer, Integer>();
+		childList = new LinkedList<UserProcess>();
 		exitMapLock = new Lock();
 		Machine.interrupt().restore(status);
 		// int numPhysPages = Machine.processor().getNumPhysPages();
@@ -68,14 +68,14 @@ public class UserProcess {
      * @return	<tt>true</tt> if the program was successfully executed.
      */
     public boolean execute(String name, String[] args) {
-	if (!load(name, args))
-	    return false;
-	
+	if (load(name, args)){
 	//new UThread(this).setName(name).fork();
 		thread = new UThread(this);
 		thread.setName(name).fork();
 
 	return true;
+	}
+	return false;
     }
 
     /**
@@ -83,7 +83,7 @@ public class UserProcess {
      * Called by <tt>UThread.saveState()</tt>.
      */
     public void saveState() {
-//TODO:?
+		//don't need to implement?
     }
 
     /**
@@ -161,18 +161,18 @@ public class UserProcess {
 		if (vaddr + length >= numPages * pageSize)
 			length = numPages * pageSize - vaddr;
 
-		int firstPage = Machine.processor().pageFromAddress(vaddr);
-		int lastPage = Machine.processor().pageFromAddress(vaddr + length - 1);
+		int first = Machine.processor().pageFromAddress(vaddr);
+		int last = Machine.processor().pageFromAddress(vaddr + length - 1);
 		int bytesTransferred = 0;
 
-		for (int i = firstPage; i <= lastPage; i++) {
+		for (int i = first; i <= last; i++) {
 			int start = Math.max(i * pageSize, vaddr);
 			int end = Math.min((i + 1) * pageSize, vaddr + length);
 
-			int firstPhyAddress = translate(start, false);
-			if (firstPhyAddress < 0)
+			int firstAdd = translate(start, false);
+			if (firstAdd < 0)
 				break;
-			System.arraycopy(memory, firstPhyAddress, data, offset
+			System.arraycopy(memory, firstAdd, data, offset
 					+ bytesTransferred, end - start);
 			bytesTransferred += (end - start);
 			pageTable[i].used = true;
@@ -234,25 +234,30 @@ public class UserProcess {
 //TODO:
 if (vaddr < 0 || vaddr >= numPages * pageSize)
 			return 0;
-		if (vaddr + length >= numPages * pageSize)
+		if ( numPages * pageSize<=vaddr + length )
 			length = numPages * pageSize - vaddr;
 
-		int bytesTransferred = 0;
-		int firstPage = Machine.processor().pageFromAddress(vaddr);
-		int lastPage = Machine.processor().pageFromAddress(vaddr + length - 1);
+		int first = Machine.processor().pageFromAddress(vaddr);
+		int last = Machine.processor().pageFromAddress(vaddr + length - 1);
 
-		for (int i = firstPage; i <= lastPage; i++) {
+		
+		int bytesTransferred = 0;
+
+		for (int i = first; i <= last; i++) {
 			int start = Math.max(i * pageSize, vaddr);
 			int end = Math.min((i + 1) * pageSize, vaddr + length);
 
-			int firstPhyAddress = translate(start, true);
-			if (firstPhyAddress < 0)
+			int firstAdd = translate(start, true);
+
+			if (0 > firstAdd ){
 				break;
+			}
+
 			System.arraycopy(data, offset + bytesTransferred, memory,
-					firstPhyAddress, end - start);
-			bytesTransferred += (end - start);
-			pageTable[i].used = true;
+					firstAdd, end - start);
+			bytesTransferred = bytesTransferred + (end - start);
 			pageTable[i].dirty = true;
+			pageTable[i].used = true;
 		}
 		return bytesTransferred;
     }
@@ -350,13 +355,19 @@ if (vaddr < 0 || vaddr >= numPages * pageSize)
 		int vpn = vaddr / pageSize;
 		int offset = vaddr - vpn * pageSize;
 
-		if (vpn < 0 || vpn >= numPages)
-			return -1;
+		if (0 > vpn)
+		return -1;
+
+		if (numPages <= vpn)
+		return -1;
 
 		TranslationEntry translationEntry = pageTable[vpn];
 
-		if (!translationEntry.valid || write && translationEntry.readOnly)
+		if (!translationEntry.valid)
 			return -1;
+
+		if (translationEntry.readOnly && write)
+		return -1;
 
 		return translationEntry.ppn * pageSize + offset;
 	}
@@ -392,7 +403,7 @@ if (vaddr < 0 || vaddr >= numPages * pageSize)
 **/
 		UserKernel.pageLock.acquire();
 
-		if (numPages > UserKernel.availablePages.size()) {
+		if (UserKernel.availablePages.size() < numPages) {
 			coff.close();
 			UserKernel.pageLock.release();
 			Lib.debug(dbgProcess, "\tinsufficient physical memory");
@@ -409,24 +420,18 @@ if (vaddr < 0 || vaddr >= numPages * pageSize)
 		UserKernel.pageLock.release();
 
 		// load sections
-		for (int s = 0; s < coff.getNumSections(); s++) {
-			CoffSection section = coff.getSection(s);
+		for (int i = 0; i < coff.getNumSections(); i++) {
+			CoffSection section = coff.getSection(i);
 
 			Lib.debug(dbgProcess, "\tinitializing " + section.getName()
 					+ " section (" + section.getLength() + " pages)");
 
-			for (int i = 0; i < section.getLength(); i++) {
-				int vpn = section.getFirstVPN() + i;
-
-				/*
-				 * // allocate phisical page pageTable[vpn] = new
-				 * TranslationEntry(vpn, UserKernel.nextAvailablePage(), true,
-				 * section.isReadOnly(), false, false);
-				 */
+			for (int j = 0; j < section.getLength(); j++) {
+				int vpn = section.getFirstVPN() + j;
 
 				pageTable[vpn].readOnly = section.isReadOnly();
 
-				section.loadPage(i, pageTable[vpn].ppn);
+				section.loadPage(j, pageTable[vpn].ppn);
 			}
 		}
 	return true;
@@ -451,7 +456,7 @@ if (vaddr < 0 || vaddr >= numPages * pageSize)
 
 		UserKernel.pageLock.release();
 
-		for (int i = 0; i < 16; i++) {
+		for (int i = 0; i <= 15; i++) {
 			if (fileList[i] != null) {
 				handleClose(i);
 			}
@@ -488,30 +493,35 @@ if (vaddr < 0 || vaddr >= numPages * pageSize)
     private int handleHalt() {
 
 //TODO:
-	if (processId != 0)
-		return -1;
+	if (processId == 0){
 	Machine.halt();
 	
 	Lib.assertNotReached("Machine.halt() did not halt machine!");
 	return 0;
+	}
+	return -1;
     }
 
 //TODO:
 	private int handleCreate(int address) {
-		if (address < 0)
-			return -1;
+
 		String fileName = readVirtualMemoryString(address, 256);
+		int empty = 0;
+
+		if (0 > address)
+			return -1;
+
 		if (fileName == null)
 			return -1;
-		int empty = 0;
-		for (; empty < 16; empty++) {
+
+
+		while ( empty <= 15 ) {
+			empty++;
 			if (fileList[empty] == null) {
 				break;
 			}
 		}
-		if (empty == 16) {
-			return -1;
-		}
+
 		OpenFile newFile = ThreadedKernel.fileSystem.open(fileName, true);
 		if (!UserKernel.createFile(fileName)) {
 			return -1;
@@ -525,7 +535,7 @@ if (vaddr < 0 || vaddr >= numPages * pageSize)
 	}
 
 	public int handleOpen(int address) {
-		if (address < 0)
+		if (0 > address)
 			return -1;
 		String fileName = readVirtualMemoryString(address, 256);
 		if (fileName == null)
@@ -552,13 +562,12 @@ if (vaddr < 0 || vaddr >= numPages * pageSize)
 	}
 
 	public int handleRead(int index, int address, int bufsize) {
-		if (index < 0 || index >= 16 || fileList[index] == null || address < 0
-				|| bufsize < 0) {
+		if (index < 0 || index > 17 || fileList[index] == null || 0 > address || bufsize < 0) {
 			return -1;
 		}
 
 		FileDescriptor tmp = fileList[index];
-		int numBytesWrited = 0;
+		int numBytesWritten = 0;
 
 		while (bufsize > 0) {
 			byte[] buffer = new byte[Math.min(bufsize, maxBufSise)];
@@ -568,17 +577,18 @@ if (vaddr < 0 || vaddr >= numPages * pageSize)
 			if (numBytesRead < 0) {
 				return -1;
 			} else {
-				int numBytesNewlyWrited = writeVirtualMemory(address, buffer,
-						0, numBytesRead);
+				int numBytesNewlyWrited = writeVirtualMemory(address, buffer,0, numBytesRead);
 				if (numBytesNewlyWrited < numBytesRead)
 					return -1;
-				numBytesWrited += numBytesRead;
+
+				numBytesWritten += numBytesRead;
 				address += numBytesRead;
+				
 				if (numBytesRead < buffer.length)
 					break;
 			}
 		}
-		return numBytesWrited;
+		return numBytesWritten;
 	}
 
 	public int handleWrite(int index, int address, int bufsize) {
@@ -588,7 +598,7 @@ if (vaddr < 0 || vaddr >= numPages * pageSize)
 		}
 
 		FileDescriptor tmp = fileList[index];
-		int numBytesWrited = 0;
+		int numBytesWritten = 0;
 
 		while (bufsize > 0) {
 			byte[] buffer = new byte[Math.min(bufsize, maxBufSise)];
@@ -602,7 +612,7 @@ if (vaddr < 0 || vaddr >= numPages * pageSize)
 				int numBytesNewlyWrited = tmp.file.write(buffer, 0,
 						buffer.length);
 				stdLock.release();
-				numBytesWrited += numBytesRead;
+				numBytesWritten += numBytesRead;
 				address += numBytesRead;
 				if (numBytesNewlyWrited < numBytesRead)
 					break;
@@ -610,7 +620,7 @@ if (vaddr < 0 || vaddr >= numPages * pageSize)
 
 		}
 
-		return numBytesWrited;
+		return numBytesWritten;
 	}
 
 	public int handleClose(int index) {
@@ -815,16 +825,16 @@ if (vaddr < 0 || vaddr >= numPages * pageSize)
 			return handleCreate(a0);
 		case syscallOpen:
 			return handleOpen(a0);
-		case syscallRead:
-			return handleRead(a0, a1, a2);
-		case syscallWrite:
-			return handleWrite(a0, a1, a2);
 		case syscallClose:
 			return handleClose(a0);
 		case syscallUnlink:
 			return handleUnlink(a0);
 		case syscallExit:
 			return handleExit(a0);
+		case syscallRead:
+			return handleRead(a0, a1, a2);
+		case syscallWrite:
+			return handleWrite(a0, a1, a2);
 		case syscallExec:
 			return handleExec(a0, a1, a2);
 		case syscallJoin:
@@ -887,19 +897,19 @@ if (vaddr < 0 || vaddr >= numPages * pageSize)
 		test.load("halt.coff", new String[]{});
 		
 		int vaddr = Processor.makeAddress(2,0) - 500;
-		int wint = 0x012345678;
-		int rint = 0;
+		int writeint = 0x012345678;
+		int  readint= 0;
 		
 		byte[] wbuffer = new byte[4];
 		byte[] rbuffer = new byte[4];
 		
-		Lib.bytesFromInt(wbuffer,0,wint);
+		Lib.bytesFromInt(wbuffer,0,writeint);
 		test.writeVirtualMemory(vaddr, wbuffer);
 		test.readVirtualMemory(vaddr, rbuffer);
 		
-		rint = Lib.bytesToInt(rbuffer, 0);
+		readint = Lib.bytesToInt(rbuffer, 0);
 		
-		if(rint != wint){
+		if(readint != writeint){
 			pass = false;
 			System.err.println("FAIL: Read/Write failed to virtual memory!");
 		}
@@ -910,8 +920,8 @@ if (vaddr < 0 || vaddr >= numPages * pageSize)
 		rbuffer[2] = memory[Processor.makeAddress(2,0)-498];
 		rbuffer[3] = memory[Processor.makeAddress(2,0)-497];
 
-		rint = Lib.bytesToInt(rbuffer, 0);
-		if(rint!=wint){
+		readint = Lib.bytesToInt(rbuffer, 0);
+		if(readint!=writeint){
 			pass = false;
 			System.err.println("FAIL: Read/Write performed on wrong physical memory!");
 		}
@@ -925,8 +935,8 @@ if (vaddr < 0 || vaddr >= numPages * pageSize)
 
 //TODO:
 	public class FileDescriptor {
-		public String filename = null;
 		public OpenFile file = null;
+		public String filename = null;
 
 		public FileDescriptor(String filename, OpenFile file) {
 			this.file = file;
